@@ -1,0 +1,405 @@
+//--------------------
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <netinet/in.h>
+#include <math.h>
+#include <ctype.h>
+
+int associativity = 1;     // Associativity of cache
+int blocksize_bytes = 128; // Cache Block size in bytes
+int cachesize_kb = 1;      // Cache size in KB
+int miss_penalty = 30;
+int number_of_blocks, num_of_set, offset_bits, index_bits, tag_bits, adress, offset, index_value, tag;
+int miss_flag, hit, miss, lw_miss, lw_hit, sw_miss, sw_hit, total_hits, total_miss, eviction_count, hit_funct_count;
+struct block
+{
+  int dirty;
+  int valid;
+  int tag;
+  int lru;
+};
+
+struct cache
+{
+  struct block *b;
+};
+
+void print_usage()
+{
+  printf("Usage: gunzip2 -c <tracefile> | ./cache -a assoc -l blksz -s size -mp mispen\n");
+  printf("  tracefile : The memory trace file\n");
+  printf("  -a assoc : The associativity of the cache\n");
+  printf("  -l blksz : The blocksize (in bytes) of the cache\n");
+  printf("  -s size : The size (in KB) of the cache\n");
+  printf("  -mp mispen: The miss penalty (in cycles) of a miss\n");
+  exit(0);
+}
+
+void validity_of_cache_arg(int number)
+{
+
+  if ((number > 0) && (number <= 4 * 1024)) // size range 1B-4MB
+  {
+    if (number == 1) // if size is 1
+    {
+      printf("\t\t\tvalid\n");
+      return;
+    }
+    else
+    {
+      while (number != 1)
+      {
+        if ((number % 2) != 0)
+        {
+          printf("\t\t\tinvalid\n\n\n");
+          exit(0);
+        }
+        number /= 2;
+      }
+      printf("\t\t\tvalid\n");
+      return;
+    }
+  }
+  else
+  {
+    printf("\t\t\tinvalid\n\n\n");
+    exit(0);
+  }
+}
+
+int cache_specs(int cachesize_kb, int blocksize_bytes)
+
+{
+  int No_of_Blocks;
+  return No_of_Blocks = (cachesize_kb * 1024) / blocksize_bytes;
+}
+
+void TIO_bits_calculation() /// tag,index and offset bits calculation
+{
+  offset_bits = log2(blocksize_bytes);
+  index_bits = log2(num_of_set);
+  tag_bits = 32 - index_bits - offset_bits;
+}
+
+int toNum(char *pStr) // char to decimal converter
+{
+  char lBuf[15];
+  char *t_ptr;
+  char *orig_pStr;
+  int t_length, k;
+  int lNum, lNeg = 0;
+  orig_pStr = pStr;
+  if (*pStr == '-') /* hex is negative */
+  {
+    lNeg = 1;
+    pStr++;
+  }
+  t_ptr = pStr;
+  t_length = strlen(t_ptr);
+  for (k = 0; k < t_length; k++)
+  {
+    if (!isxdigit(*t_ptr))
+    {
+      printf("Error: invalid hex operand, %s\n", orig_pStr);
+      exit(4);
+    }
+    t_ptr++;
+  }
+  sprintf(lBuf, "0x%s", pStr); /* convert hex string into integer */
+  sscanf(lBuf, "%i", &lNum);
+  if (lNeg)
+    lNum = -lNum;
+  return lNum;
+}
+
+void TIO_bits_seq() /// tag,index and offset values calculation
+{
+  tag = adress >> (offset_bits + index_bits);
+
+  int temp = adress >> offset_bits;
+  int mask = (1 << index_bits) - 1;
+  index_value = temp & mask;
+  int mask1 = (1 << offset_bits) - 1;
+  offset = adress & mask1;
+}
+void TIO_calculation() /// tag,index and offset values calculation
+{
+  tag = adress >> (offset_bits + index_bits);
+
+  int temp = adress >> offset_bits;
+  int mask = (1 << index_bits) - 1;
+  index_value = temp & mask;
+  int mask1 = (1 << offset_bits) - 1;
+  offset = adress & mask1;
+}
+struct cache *creat_cache()
+{
+
+  struct cache *c = (struct cache *)malloc(num_of_set * sizeof(struct cache));
+
+  int i;
+  int j;
+  for (i = 0; i < num_of_set; i++)
+  {
+    c[i].b = (struct block *)malloc(associativity * sizeof(struct block));
+    for (int j = 0; j < associativity; j++)
+    {
+      c[i].b[j].dirty = 0;
+      c[i].b[j].tag = -1;
+      c[i].b[j].valid = 0;
+      c[i].b[j].lru = associativity - 1;
+      // printf("\t%d %d %d %d\n", c[i].b[j].dirty ,c[i].b[j].tag,c[i].b[j].valid ,c[i].b[j].lru );
+    }
+  }
+
+  return c;
+}
+int miss_check(struct cache *c, int inst_type) // cheking for cache miss or hit
+{
+  miss_flag = 1;
+  for (int i = 0; i < associativity; i++)
+  {
+    if (c[index_value].b[i].tag == tag && c[index_value].b[i].valid == 1)
+    {
+      miss_flag = 0;
+      total_hits++;
+      if (inst_type == 1)
+
+      {
+        sw_hit++;
+        c[index_value].b[i].dirty = 1;
+      }
+      else
+      {
+        lw_hit++;
+        // c[index_value].b[i].dirty= 0;
+      }
+
+      for (int j = 0; j < associativity; j++) // lru update logic
+      {
+        if (c[index_value].b[j].lru < c[index_value].b[i].lru && c[index_value].b[j].valid == 1)
+        {
+          c[index_value].b[j].lru++;
+        }
+      }
+      c[index_value].b[i].lru = 0;
+      // printf("lru\t\t\t%d\n", c[index_value].b[i].lru);
+
+      return miss_flag;
+    }
+  }
+
+  return miss_flag;
+}
+int hit_funct(struct cache *c, int inst_type)
+{
+  hit_funct_count = hit_funct_count + 1;
+  int miss = miss_check(c, inst_type);
+  // printf("in miss%d\n",miss);
+  if (miss == 1) // miss handling logic
+  {
+    // printf("in miss\n");
+    total_miss++;
+    for (int i = 0; i < associativity; i++)
+    {
+      if (c[index_value].b[i].valid == 0) // if empty space found
+      {
+        c[index_value].b[i].valid = 1;
+        c[index_value].b[i].tag = tag;
+        if (inst_type)
+        {
+          sw_miss++;
+          c[index_value].b[i].dirty = 1;
+        }
+
+        else
+        {
+          lw_miss++;
+          // c[index_value].b[i].dirty= 0;
+        }
+
+        for (int j = 0; j < associativity; j++) // lru update logic
+        {
+          if (c[index_value].b[j].lru < c[index_value].b[i].lru && c[index_value].b[j].valid == 1)
+          {
+            c[index_value].b[j].lru++;
+          }
+        }
+        c[index_value].b[i].lru = 0;
+
+        return 0;
+      }
+    }
+    for (int i = 0; i < associativity; i++)
+    {
+
+      if (c[index_value].b[i].lru == associativity - 1) // replacement
+      {
+        if (c[index_value].b[i].dirty == 1)
+        {
+          eviction_count++;
+          c[index_value].b[i].dirty = 0;
+        }
+        // c[index_value].b[i].valid =1 ;
+        c[index_value].b[i].tag = tag;
+        if (inst_type)
+        {
+          sw_miss++;
+          c[index_value].b[i].dirty = 1;
+        }
+
+        else
+        {
+          lw_miss++;
+          // c[index_value].b[i].dirty= 0;
+        }
+
+        for (int j = 0; j < associativity; j++)
+        {
+          if (c[index_value].b[j].lru < c[index_value].b[i].lru && c[index_value].b[j].valid == 1)
+          {
+            c[index_value].b[j].lru++;
+          }
+        }
+        c[index_value].b[i].lru = 0;
+        return 0;
+      }
+    }
+  }
+  else
+    return 0;
+}
+
+int main(int argc, char *argv[])
+{
+  long tinstructions = 0;
+  long execution_time = 0;
+  float cpi = 0, AMAT = 0;
+  // int tmemory_accesses =0;
+  float miss_rate = 0;
+  float read_miss_rate = 0;
+
+  char addres[8];
+  int loadstore, icount;
+  char marker;
+  // int offset,index,tag;
+  int i = 0;
+  int j = 1;
+  // Process the command line arguments
+  while (j < argc)
+  {
+    if (strcmp("-a", argv[j]) == 0)
+    {
+      j++;
+      if (j >= argc)
+        print_usage();
+      associativity = atoi(argv[j]);
+      j++;
+    }
+    else if (strcmp("-l", argv[j]) == 0)
+    {
+      j++;
+      if (j >= argc)
+        print_usage();
+      blocksize_bytes = atoi(argv[j]);
+      j++;
+    }
+    else if (strcmp("-s", argv[j]) == 0)
+    {
+      j++;
+      if (j >= argc)
+        print_usage();
+      cachesize_kb = atoi(argv[j]);
+      j++;
+    }
+    else if (strcmp("-mp", argv[j]) == 0)
+    {
+      j++;
+      if (j >= argc)
+        print_usage();
+      miss_penalty = atoi(argv[j]);
+      j++;
+    }
+    else
+    {
+      print_usage();
+    }
+  }
+  // Cache Validity
+  printf("-----------------\n");
+  printf("Cache Parameters \n");
+  printf("-----------------\n");
+  printf("Cache Size (KB)\t\t\t%d  ", cachesize_kb);
+  validity_of_cache_arg(cachesize_kb);
+  printf("Cache Associativity\t\t%d", associativity);
+  validity_of_cache_arg(associativity);
+  printf("Cache Block Size (bytes)\t%d", blocksize_bytes);
+  validity_of_cache_arg(blocksize_bytes);
+  printf("Miss Penalty (cyc)\t\t%d\n", miss_penalty);
+
+  // Cache Specfications
+
+  printf("---------------------\n");
+  printf("Cache Specfications\n");
+  printf("---------------------\n");
+  int number_of_blocks = cache_specs(cachesize_kb, blocksize_bytes);
+  printf("Num of Blocks\t\t\t%d\n", number_of_blocks);
+  num_of_set = number_of_blocks / associativity; /// number of set in cache
+  printf("Cache Size (KB)\t\t\t%d\n", cachesize_kb);
+  printf("Cache Associativity\t\t%d\n", associativity);
+  printf("Cache Block Size (bytes)\t%d\n", blocksize_bytes);
+  printf("Miss penalty (cyc)\t\t%d\n", miss_penalty);
+  printf("number_of_blocks (bytes)\t%d\n", number_of_blocks);
+  printf("num_of_set (bytes)\t\t%d\n", num_of_set);
+  printf("\n");
+  printf("offset_bits\t\t\t%d\n", offset_bits);
+  printf("index_bits\t\t\t%d\n", index_bits);
+  printf("tag_bits\t\t\t%d\n", tag_bits);
+
+    TIO_bits_calculation();
+  struct cache *c = creat_cache();
+
+  while (scanf("%c %d %s %d\n", &marker, &loadstore, addres, &icount) != EOF)
+  {
+    i++;
+    tinstructions = tinstructions + icount;
+    adress = toNum(addres);
+    TIO_calculation();
+    hit_funct(c, loadstore);
+  }
+
+  printf("---------------------\n");
+  printf("Cache Misses+ Hits\n");
+  printf("---------------------\n");
+  printf("total_misses\t\t\t%d\n", total_miss);
+  printf("total_hits\t\t\t%d\n", total_hits);
+  printf("total access\t\t\t%d\n", (total_hits + total_miss));
+  printf("load_misses\t\t\t%d\n", lw_miss);
+  printf("store_misses\t\t\t%d\n", sw_miss);
+  printf("load_hits\t\t\t%d\n", lw_hit);
+  printf("store_hits\t\t\t%d\n", sw_hit);
+
+  miss_rate = (float)total_miss / (float)i;
+  read_miss_rate = (float)lw_miss / (float)(lw_miss + lw_hit);
+  execution_time = tinstructions + total_miss * miss_penalty + eviction_count * 2;
+  cpi = execution_time / (float)tinstructions;
+  AMAT = 1 + (miss_rate * miss_penalty);
+
+  printf("---------------------\n");
+  printf("Calculations\n");
+  printf("---------------------\n");
+  printf("execution time\t\t\t%ld cycles\n", execution_time);
+  printf("instructions\t\t\t%ld\n", tinstructions);
+  printf("memory accesses\t\t\t%d\n", i);
+  printf("overall miss rate\t\t%.2f\n", miss_rate);
+  printf("read miss rate\t\t\t%.2f\n", read_miss_rate);
+  printf("total CPI\t\t\t%.2f\n", cpi);
+  printf("AMAT\t\t\t\t%.2f cycles\n", AMAT);
+  printf("dirty evicts \t\t\t%d\n", eviction_count);
+
+
+
+}
+
+
